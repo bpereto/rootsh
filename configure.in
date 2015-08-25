@@ -76,6 +76,8 @@ else
   ])
   if test "x$syslogsocket" = "xno" ; then
     AC_MSG_RESULT(disabled)
+  elif test "x$syslogsocket" = "x" ; then
+    AC_MSG_RESULT(disabled)
   else
       if test "x$syslogsocket" = "x" ; then
         socketpath="/run/systemd/journal/syslog"
@@ -92,6 +94,7 @@ else
 
 fi
 AM_CONDITIONAL(LOGTOSYSLOG, test "x$syslog" != "xno")
+AM_CONDITIONAL(LOGTOSYSLOGSOCKET, test "x$syslogsocket" != "xno")
 
 
 logfile=

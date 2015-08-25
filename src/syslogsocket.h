@@ -1,10 +1,4 @@
 
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <sys/un.h>
-#include <arpa/inet.h>
-#include <netdb.h>
-
 enum {
         TYPE_UDP = (1 << 1),
         TYPE_TCP = (1 << 2),

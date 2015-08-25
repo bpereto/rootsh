@@ -33,15 +33,19 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include <errno.h>
 #include <unistd.h>
 #include "config.h"
-#include "vars.h"
+#ifdef LOGTOSYSLOGSOCKET
+#   include "syslogsocket.h"
+#endif
 
 extern void write2syslog(const char *oBuffer, size_t oCharCount);
 char *stripesc(char *escBuffer);
 
+#ifdef LOGTOSYSLOGSOCKET
 void err(int eval, const char *fmt, ...);
 void errx(int eval, const char *fmt, ...);
 void warn(const char *fmt, ...);
 void warnx(const char *fmt, ...);
+#endif
 int asprintf(char **strp, const char *fmt, ...);
 
 

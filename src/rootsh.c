@@ -28,7 +28,6 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include <sys/ioctl.h>
 #include <errno.h>
 #include "config.h"
-#include "vars.h"
 #include <sys/param.h>
 #include <sys/time.h>
 #include <stdio.h>
@@ -64,6 +63,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #   include <sys/un.h>
 #   include <arpa/inet.h>
 #   include <netdb.h>
+#   include "syslogsocket.h"
 #endif
 
 #if HAVE_SYS_PARAM_H
@@ -123,6 +123,7 @@ pid_t forkpty(int *, char *, struct termios *, struct winsize *);
 #endif
 char **build_scp_args( char *str, size_t reserve );
 
+#ifdef LOGTOSYSLOGSOCKET
 void err(int eval, const char *fmt, ...);
 void errx(int eval, const char *fmt, ...);
 void warn(const char *fmt, ...);
@@ -133,6 +134,7 @@ int unix_socket(struct logger_ctl *ctl, const char *path, const int socket_type)
 void syslog_local_header(struct logger_ctl *const ctl);
 const char *rfc3164_current_time(void);
 void generate_syslog_header(struct logger_ctl *const ctl);
+#endif
 
 /* 
 //  global variables 
@@ -244,12 +246,13 @@ static int masterPty;
 static struct termios termParams, newTty;
 static struct winsize winSize;
 
+
+
 #ifdef LOGTOSYSLOGSOCKET
 /* init logger struct */
 struct logger_ctl ctl = {
     .fd = -1,
     .pid = 0,
-    //.pri = LOG_USER | LOG_NOTICE,
     .pri = SYSLOGFACILITY | SYSLOGPRIORITY,
     .prio_prefix = 0,
     .tag = NULL,
@@ -264,7 +267,6 @@ struct logger_ctl ctl = {
     .rfc5424_host = 1,
     .skip_empty_lines = 0
 };
-#endif
 
 
 const char *rfc3164_current_time(void)
@@ -343,7 +345,7 @@ void generate_syslog_header(struct logger_ctl *const ctl)
     ctl->syslogfp(ctl);
 }
 
-
+#endif
 
 
 
@@ -376,6 +378,7 @@ int main(int argc, char **argv) {
       {"logdir", 1, 0, 'd'},
       {"no-logfile", 0, 0, 'x'},
       {"no-syslog", 0, 0, 'y'},
+      {"no-socket", 0, 0, 'z'},
       {0, 0, 0, 0}
   };
 
@@ -386,7 +389,7 @@ int main(int argc, char **argv) {
   strncpy(progName, basename(argv[0]), (MAXPATHLEN - 1));
 
   while (1) {
-    c = getopt_long (argc, argv, "hViu:f:d:xyc:",
+    c = getopt_long (argc, argv, "hViu:f:d:xyzc:",
         long_options, &option_index);
     if (c == -1) {
       /*
@@ -429,6 +432,9 @@ int main(int argc, char **argv) {
         break;
       case 'y':
         logtosyslog = 0;
+        break;
+      case 'z':
+        logtosyslogsocket = 0;
         break;
       default:
         usage ();
@@ -800,7 +806,8 @@ int beginlogging(const char *shellCommands) {
 #endif
 #ifdef LOGTOSYSLOG
   static char sessionIdWithUid[sizeof(sessionId) + 10];
-
+#endif
+#ifdef LOGTOSYSLOGSOCKET
   struct logger_ctl *myctl;
   myctl = &ctl;
 #endif
@@ -911,6 +918,7 @@ int beginlogging(const char *shellCommands) {
           "%s=%s,%s: logging new %ssession (%s)", 
           userName, runAsUser ? runAsUser : getpwuid(getuid())->pw_name, 
           ttyname(0), isaLoginShell ? "login " : "", sessionId);
+#ifdef LOGTOSYSLOGSOCKET
       if (logtosyslogsocket) {
           myctl->fd = unix_socket(myctl, myctl->unix_socket, myctl->socket_type);
           if (!myctl->syslogfp) {
@@ -922,6 +930,7 @@ int beginlogging(const char *shellCommands) {
           generate_syslog_header(myctl);
 
       }
+#endif
     }
   }
 #endif
@@ -993,6 +1002,10 @@ void endlogging() {
   char msgbuf[BUFSIZ];
   struct stat statBuf;
   char closedLogFileName[MAXPATHLEN];
+#endif
+#ifdef LOGTOSYSLOGSOCKET
+  struct logger_ctl *myctl;
+  myctl = &ctl;
 #endif
 
 #ifdef LOGTOFILE
@@ -1087,6 +1100,14 @@ void endlogging() {
     syslog(SYSLOGFACILITY | SYSLOGPRIORITY, "%s,%s: closing %s session (%s)", 
         userName, ttyname(0), progName, sessionId);
     closelog();
+  }
+#endif
+#ifdef LOGTOSYSLOGSOCKET
+  if (logtosyslogsocket) {
+      if (myctl->fd != -1 && close(myctl->fd) != 0) {
+        err(EXIT_FAILURE, "close failed");
+      free(myctl->hdr);
+      }
   }
 #endif
 }
