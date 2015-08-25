@@ -68,6 +68,28 @@ else
     AC_DEFINE(LOGUSERNAMETOSYSLOG, 1,[enable logging of username in every line])
     AC_MSG_RESULT(enabled)
   fi
+  AC_MSG_CHECKING(for socket in syslog)
+  AC_ARG_ENABLE(syslog-socket,
+  [  --enable-syslog-socket=[socketpath]    enable logging to syslog socket],
+  [
+    syslogsocket=$enableval
+  ])
+  if test "x$syslogsocket" = "xno" ; then
+    AC_MSG_RESULT(disabled)
+  else
+      if test "x$syslogsocket" = "x" ; then
+        socketpath="/run/systemd/journal/syslog"
+       elif test "x$syslogsocket" = "xyes" ; then
+        socketpath="/run/systemd/journal/syslog"
+      else
+        socketpath=$syslogsocket
+    fi
+    AC_MSG_RESULT(enabled)
+    AC_DEFINE_UNQUOTED(SYSLOG_SOCKET, "$socketpath", [syslog socket path])
+    AC_DEFINE(LOGTOSYSLOGSOCKET, 1,[enable logging to syslog socket])
+  fi
+
+
 fi
 AM_CONDITIONAL(LOGTOSYSLOG, test "x$syslog" != "xno")
 
@@ -407,7 +429,7 @@ AC_ARG_ENABLE(more-warnings,
 
 if test "$GCC" = "yes" -a "$set_more_warnings" != "no"; then
   CFLAGS="$CFLAGS -Wall -Wstrict-prototypes -Wmissing-declarations \
-  -Wnested-externs -Wpointer-arith -pedantic"
+  -Wnested-externs -Wpointer-arith"
 fi
 
 dnl --- set operating specific defines
@@ -423,7 +445,7 @@ case "$host_os" in
   *linux*)
     AC_MSG_RESULT(linux)
     AC_DEFINE(LINUX_COMPAT,,descr)
-    CFLAGS="$CFLAGS -pedantic -Wstrict-prototypes"
+    CFLAGS="$CFLAGS -Wstrict-prototypes"
     ;;
   *hp*)
     AC_MSG_RESULT(hp-ux)

@@ -28,7 +28,9 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include <sys/ioctl.h>
 #include <errno.h>
 #include "config.h"
+#include "vars.h"
 #include <sys/param.h>
+#include <sys/time.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -55,6 +57,13 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #endif
 #if HAVE_UTIL_H
 #  include <util.h>
+#endif
+#if LOGTOSYSLOGSOCKET
+#   include <sys/types.h>
+#   include <sys/socket.h>
+#   include <sys/un.h>
+#   include <arpa/inet.h>
+#   include <netdb.h>
 #endif
 
 #if HAVE_SYS_PARAM_H
@@ -113,6 +122,17 @@ extern void write2syslog(const void *, size_t);
 pid_t forkpty(int *, char *, struct termios *, struct winsize *);
 #endif
 char **build_scp_args( char *str, size_t reserve );
+
+void err(int eval, const char *fmt, ...);
+void errx(int eval, const char *fmt, ...);
+void warn(const char *fmt, ...);
+void warnx(const char *fmt, ...);
+int asprintf(char **strp, const char *fmt, ...);
+
+int unix_socket(struct logger_ctl *ctl, const char *path, const int socket_type);
+void syslog_local_header(struct logger_ctl *const ctl);
+const char *rfc3164_current_time(void);
+void generate_syslog_header(struct logger_ctl *const ctl);
 
 /* 
 //  global variables 
@@ -210,6 +230,11 @@ static int logtosyslog = 0;
 #else
 static int logtosyslog = 1;
 #endif
+#ifndef LOGTOSYSLOGSOCKET
+static int logtosyslogsocket = 0;
+#else
+static int logtosyslogsocket = 1;
+#endif
 static char *userName;
 static char *runAsUser;
 static int standalone;
@@ -218,6 +243,108 @@ static int isaLoginShell = 0;
 static int masterPty;
 static struct termios termParams, newTty;
 static struct winsize winSize;
+
+#ifdef LOGTOSYSLOGSOCKET
+/* init logger struct */
+struct logger_ctl ctl = {
+    .fd = -1,
+    .pid = 0,
+    //.pri = LOG_USER | LOG_NOTICE,
+    .pri = SYSLOGFACILITY | SYSLOGPRIORITY,
+    .prio_prefix = 0,
+    .tag = NULL,
+    .unix_socket = SYSLOG_SOCKET,
+    .unix_socket_errors = 0,
+    .hdr = NULL,
+    .msgid = NULL,
+    .socket_type = ALL_TYPES,
+    .max_message_size = 1024,
+    .rfc5424_time = 1,
+    .rfc5424_tq = 1,
+    .rfc5424_host = 1,
+    .skip_empty_lines = 0
+};
+#endif
+
+
+const char *rfc3164_current_time(void)
+{
+    static char time[32];
+    struct timeval tv;
+    struct tm *tm;
+    static char *monthnames[] = {
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug",
+        "Sep", "Oct", "Nov", "Dec"
+    };
+
+    gettimeofday(&tv, NULL);
+    tm = localtime(&tv.tv_sec);
+    snprintf(time, sizeof(time),"%s %2d %2.2d:%2.2d:%2.2d",
+        monthnames[tm->tm_mon], tm->tm_mday,
+        tm->tm_hour, tm->tm_min, tm->tm_sec);
+    return time;
+}
+
+void syslog_local_header(struct logger_ctl *const ctl)
+{
+    char pid[32];
+
+    if (ctl->pid)
+        snprintf(pid, sizeof(pid), "[%d]", ctl->pid);
+    else
+        pid[0] = '\0';
+
+    asprintf(&ctl->hdr, "<%d>%s %s%s: ", ctl->pri, rfc3164_current_time(),
+        ctl->tag, pid);
+}
+
+int unix_socket(struct logger_ctl *ctl, const char *path, const int socket_type)
+{
+    int fd, i;
+    static struct sockaddr_un s_addr;   /* AF_UNIX address of local logger */
+
+    if (strlen(path) >= sizeof(s_addr.sun_path))
+        errx(EXIT_FAILURE, "openlog %s: pathname too long", path);
+
+    s_addr.sun_family = AF_UNIX;
+    strcpy(s_addr.sun_path, path);
+
+    for (i = 2; i; i--) {
+        int st = -1;
+
+        if (i == 2 && socket_type & TYPE_UDP)
+            st = SOCK_DGRAM;
+        if (i == 1 && socket_type & TYPE_TCP)
+            st = SOCK_STREAM;
+        if (st == -1 || (fd = socket(AF_UNIX, st, 0)) == -1)
+            continue;
+        if (connect(fd, (struct sockaddr *)&s_addr, sizeof(s_addr)) == -1) {
+            close(fd);
+            continue;
+        }
+        break;
+    }
+
+    if (i == 0) {
+        if (ctl->unix_socket_errors)
+            err(EXIT_FAILURE, "socket %s", path);
+
+        /* openlog(3) compatibility, socket errors are
+         * not reported, but ignored silently */
+        ctl->noact = 1;
+        return -1;
+    }
+    return fd;
+}
+
+void generate_syslog_header(struct logger_ctl *const ctl)
+{
+    free(ctl->hdr);
+    ctl->syslogfp(ctl);
+}
+
+
+
 
 
 int main(int argc, char **argv) {
@@ -251,6 +378,7 @@ int main(int argc, char **argv) {
       {"no-syslog", 0, 0, 'y'},
       {0, 0, 0, 0}
   };
+
 
   /* 
   //  This should be rootsh, but it could have been renamed.
@@ -672,6 +800,9 @@ int beginlogging(const char *shellCommands) {
 #endif
 #ifdef LOGTOSYSLOG
   static char sessionIdWithUid[sizeof(sessionId) + 10];
+
+  struct logger_ctl *myctl;
+  myctl = &ctl;
 #endif
 
   if (logtofile == 0 && logtosyslog == 0) {
@@ -780,6 +911,17 @@ int beginlogging(const char *shellCommands) {
           "%s=%s,%s: logging new %ssession (%s)", 
           userName, runAsUser ? runAsUser : getpwuid(getuid())->pw_name, 
           ttyname(0), isaLoginShell ? "login " : "", sessionId);
+      if (logtosyslogsocket) {
+          myctl->fd = unix_socket(myctl, myctl->unix_socket, myctl->socket_type);
+          if (!myctl->syslogfp) {
+            myctl->syslogfp = syslog_local_header;
+          }
+          if (!myctl->tag) {
+              myctl->tag = sessionId;
+          }
+          generate_syslog_header(myctl);
+
+      }
     }
   }
 #endif

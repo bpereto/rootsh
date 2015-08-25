@@ -13,3 +13,4 @@ aclocal.m4
 configure
 src/Makefile.in
 src/config.h.in
+contrib/linux/rootsh.spec

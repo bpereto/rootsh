@@ -31,10 +31,19 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include <stdlib.h>
 #include <syslog.h>
 #include <errno.h>
+#include <unistd.h>
 #include "config.h"
+#include "vars.h"
 
 extern void write2syslog(const char *oBuffer, size_t oCharCount);
 char *stripesc(char *escBuffer);
+
+void err(int eval, const char *fmt, ...);
+void errx(int eval, const char *fmt, ...);
+void warn(const char *fmt, ...);
+void warnx(const char *fmt, ...);
+int asprintf(char **strp, const char *fmt, ...);
+
 
 #define OBUFSIZ 1024
 
@@ -285,15 +294,39 @@ void write2syslog(const char *optr, size_t optrLength) {
     /*
     //  send the resulting line to syslog 
     */
+
+    char *msg;
+
 #ifdef LINECNT
-    syslog(SYSLOGFACILITY | SYSLOGPRIORITY, "%03d: %s", linecnt++, eptr);
+    asprintf(&msg, "%03d: %s", linecnt++, eptr);
     if (linecnt == 101) linecnt = 0;
 #else
-    syslog(SYSLOGFACILITY | SYSLOGPRIORITY, "%s", eptr);
+    asrpintf(&msg, "%s", eptr);
 #endif
+
+#ifdef LOGTOSYSLOGSOCKET
+    /*
+     * send to socket
+     */
+    struct logger_ctl *myctl = &ctl;
+    char *buf;
+
+    const size_t len = myctl->octet_count ?
+        asprintf(&buf, "%zu %s%s", strlen(myctl->hdr)+strlen(msg), myctl->hdr, msg):
+        asprintf(&buf, "%s%s", myctl->hdr, msg);
+
+    if (write(myctl->fd, buf, len) < 0)
+        warn("write failed");
+
+    free(buf);
+#else
+    syslog(SYSLOGFACILITY | SYSLOGPRIORITY, "%s", msg);
+#endif
+    
     /*
     //  release the escape-free buffer 
     */
+    free(msg);
     free(eptr);
     if ((lptr == rptr + rptrLength - 1) && (*lptr == '\r')) {
       /*
